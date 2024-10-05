@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\deps\Audio\src\Audio.csproj" />
+    <ProjectReference Include="..\deps\Structs\src\Structs.csproj" />
+    <ProjectReference Include="..\deps\GUI\src\GUI.csproj" />
+    <ProjectReference Include="..\deps\Graphics\src\Graphics.csproj" />
+    <ProjectReference Include="..\deps\Windowing\src\Windowing.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+  </PropertyGroup>
+
+</Project>
