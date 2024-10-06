@@ -164,9 +164,12 @@ namespace lvt
                 _read.Start();
             }
             
-            byte[] info = new DeviceInfo(_read.SampleRate, _read.Stereo).GetBytes();
-            _console.WriteLine("Sending new device info.");
-            _udp.Send(info, info.Length, _ep);
+            if (_sendingData)
+            {
+                byte[] info = new DeviceInfo(_read.SampleRate, _read.Stereo).GetBytes();
+                _console.WriteLine("Sending new device info.");
+                _udp.Send(info, info.Length, _ep);
+            }
         }
         
         protected override void OnStart(EventArgs e)
@@ -182,8 +185,11 @@ namespace lvt
             _read.Stop();
             _sys.Stop();
             
-            // send end call
-            _udp.Send(new byte[] { 5 }, 1, _ep);
+            if (_sendingData)
+            {
+                // send end call
+                _udp.Send(new byte[] { 5 }, 1, _ep);
+            }
         }
         protected override void OnUpdate(FrameEventArgs e)
         {

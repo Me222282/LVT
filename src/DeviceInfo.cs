@@ -11,8 +11,10 @@ namespace lvt
             SampleRate = sr;
             Stereo = s;
         }
-        
+
+#pragma warning disable CS0414
         private byte _code;
+#pragma warning restore CS0414
         public long SampleRate { get; }
         public bool Stereo { get; }
         
