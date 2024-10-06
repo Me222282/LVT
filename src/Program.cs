@@ -38,6 +38,7 @@ namespace lvt
             _udp = new UdpClient(new IPEndPoint(IPAddress.Any, _port));
             
             _console = new ConsoleElement(new Layout(0.5, 0d, 0.95, 1.95));
+            _console.TextSize = 12d;
             AddChild(_console);
             
             _left = new Container(new Layout(-0.5, 0d, 0.95, 1.95));
@@ -49,11 +50,15 @@ namespace lvt
             _enter.SingleLine = true;
             _left.AddChild(_enter);
             
+            _rb = new ReadBuffer();
+            
             _sys = new AudioSystem(Devices.DefaultOutput, 1024);
             _sys.Gain = 0.5;
             _read = new AudioReader(Devices.DefaultInput, 1024);
+            _read.OnAudio += Send;
+            _sys.Sources.Add(_rb);
             
-            _rb = new ReadBuffer(1024 * 8, 1024 * 2);
+            RootElement.Focus = _enter;
         }
         
         private ConsoleElement _console;
@@ -61,13 +66,12 @@ namespace lvt
         private TextInput _enter;
         
         private UdpClient _udp;
-        private IPEndPoint _ep;
+        private IPEndPoint _ep = new IPEndPoint(IPAddress.Any, _port);
         private ReadBuffer _rb;
         
         private bool _location = false;
         private bool _connection = false;
-        
-        private IAsyncResult _ar;
+        private bool _sendingData = false;
         
         private AudioSystem _sys;
         private AudioReader _read;
@@ -76,7 +80,7 @@ namespace lvt
         {
             base.OnStart(e);
             
-            _ar = _udp.BeginReceive(FindRequest, null);
+            Task.Run(Receive);
         }
         protected override void OnStop(EventArgs e)
         {
@@ -104,58 +108,13 @@ namespace lvt
                 
                 if (_location) { return; }
                 _location = true;
-                // end search
-                _udp.Client.Close();
-                _ar = null;
                 
-                Task.Run(() =>
-                {
-                    _udp = new UdpClient();
-                    _udp.Connect(_ep);
-                    
-                    _console.WriteLine("Sending request.");
-                    _udp.Send(_sendKey, _sendKey.Length);
-                    _console.WriteLine("Awaiting response...");
-                    
-                    _ar = _udp.BeginReceive(RequestResult, null);
-                });
+                _console.WriteLine("Sending request.");
+                _udp.Send(_sendKey, _sendKey.Length, _ep);
+                _console.WriteLine("Awaiting response...");
             }
         }
         
-        private void RequestResult(IAsyncResult ar)
-        {
-            byte[] confirm = _udp.EndReceive(ar, ref _ep);
-            if (Enumerable.SequenceEqual(_connectKey, confirm))
-            {
-                _console.WriteLine("Request received.");
-                StartCall();
-                return;
-            }
-            
-            if (Enumerable.SequenceEqual(_goAwayKey, confirm))
-            {
-                _console.WriteLine("Request DENIED.");
-                return;
-            }
-            
-            _ar = _udp.BeginReceive(RequestResult, null);
-        }
-        private void FindRequest(IAsyncResult ar)
-        {
-            if (_location) { return; }
-            IPEndPoint ep = new IPEndPoint(IPAddress.Any, _port);
-            byte[] check = _udp.EndReceive(ar, ref ep);
-            
-            // request made
-            if (Enumerable.SequenceEqual(_sendKey, check))
-            {
-                Request r = new Request(ep.Address);
-                r.OnButton += ResolveRequest;
-                _left.AddChild(r);
-            }
-            
-            _ar = _udp.BeginReceive(FindRequest, null);
-        }
         private void ResolveRequest(IPAddress address, bool accept)
         {   
             IPEndPoint ep = new IPEndPoint(address, _port);
@@ -175,32 +134,33 @@ namespace lvt
             
             _location = true;
             
-            _udp.Close();
-            _udp = new UdpClient();
-            _udp.Connect(ep);
-            
-            _udp.Send(_connectKey, _connectKey.Length);
+            _udp.Send(_connectKey, _connectKey.Length, ep);
             _ep = ep;
             
+            _connection = true;
             Task.Run(StartCall);
         }
         private void StartCall()
-        {
+        {   
             byte[] info = new DeviceInfo(_read.SampleRate, _read.Stereo).GetBytes();
-            _console.WriteLine("Sending device information.");
-            _udp.Send(info, info.Length);
+            _console.WriteLine("Exchanging device information.");
+            _udp.Send(info, info.Length, _ep);
             
-            byte[] oi = _udp.Receive(ref _ep);
-            DeviceInfo di = DeviceInfo.FromBytes(oi);
-            _console.WriteLine("Received device information.");
-            _rb.Info = di;
-            _rb.OurSR = _sys.SampleRate;
+            // byte[] oi = _udp.Receive(ref _ep);
+            // DeviceInfo di = DeviceInfo.FromBytes(oi);
+            // _console.WriteLine("Device information exchanged.");
+            // _rb.Info = di;
+            // _rb.OurSR = _sys.SampleRate;
             
-            Thread.Sleep(100);
+            while (!_sendingData)
+            {
+                Thread.Sleep(10);
+            }
+            
+            // Thread.Sleep(100);
             
             _console.WriteLine("Starting call.");
-        
-            Task.Run(Receive);
+            
             _read.Start();
             _sys.Start();
         }
@@ -208,9 +168,55 @@ namespace lvt
         {
             while (Running)
             {
-                byte[] data = _udp.Receive(ref _ep);
+                IPEndPoint ep = new IPEndPoint(_ep.Address, _port);
+                byte[] data = _udp.Receive(ref ep);
+                // request made
+                if (!_location)
+                {
+                    if (Enumerable.SequenceEqual(_sendKey, data))
+                    {
+                        Request r = new Request(ep.Address);
+                        r.OnButton += ResolveRequest;
+                        _left.AddChild(r);
+                    }
+                    continue;
+                }
+                if (!_connection)
+                {
+                    if (Enumerable.SequenceEqual(_connectKey, data))
+                    {
+                        _console.WriteLine("Request received.");
+                        _connection = true;
+                        Task.Run(StartCall);
+                        continue;
+                    }
+                    
+                    if (Enumerable.SequenceEqual(_goAwayKey, data))
+                    {
+                        _console.WriteLine("Request DENIED.");
+                    }
+                    continue;
+                }
+                if (!_sendingData)
+                {
+                    DeviceInfo di = DeviceInfo.FromBytes(data);
+                    _console.WriteLine("Device information exchanged.");
+                    _rb.Info = di;
+                    _rb.OurSR = _sys.SampleRate;
+                    _sendingData = true;
+                    continue;
+                }
+                
+                // audio data
                 _rb.Write(data);
             }
+        }
+        private void Send(Span<float> data, uint channels)
+        {
+            Span<byte> bytes = MemoryMarshal.AsBytes(data);
+            byte[] array = bytes.ToArray();
+            
+            _udp.SendAsync(array, array.Length, _ep);
         }
         private bool GetIP(string ipStr)
         {
