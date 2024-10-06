@@ -7,10 +7,12 @@ namespace lvt
     {
         public DeviceInfo(long sr, bool s)
         {
+            _code = 1;
             SampleRate = sr;
             Stereo = s;
         }
         
+        private byte _code;
         public long SampleRate { get; }
         public bool Stereo { get; }
         

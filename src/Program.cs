@@ -46,18 +46,62 @@ namespace lvt
             _left.LayoutManager = new BlockLayout(10d);
             AddChild(_left);
             
+            // outputs
+            SelectBox outDev = new SelectBox();
+            outDev.TextSize = 12d;
+            outDev.Width = 350d;
+            string[] names = new string[Devices.Outputs.Length];
+            for (int i = 0; i < names.Length; i++)
+            {
+                AudioDevice ad = Devices.Outputs[i];
+                names[i] = ad.Name;
+                if (ad.Name == Devices.DefaultOutput.Name)
+                {
+                    outDev.Select = i;
+                }
+            }
+            outDev.OnSelect += SetOutput;
+            outDev.Options = names;
+            _left.AddChild(outDev);
+            
+            // inputs
+            SelectBox inDev = new SelectBox();
+            inDev.TextSize = 12d;
+            inDev.Width = 350d;
+            names = new string[Devices.Inputs.Length];
+            for (int i = 0; i < names.Length; i++)
+            {
+                AudioDevice ad = Devices.Inputs[i];
+                names[i] = ad.Name;
+                if (ad.Name == Devices.DefaultInput.Name)
+                {
+                    inDev.Select = i;
+                }
+            }
+            inDev.OnSelect += SetInput;
+            inDev.Options = names;
+            _left.AddChild(inDev);
+            
             _enter = new TextInput(new TextLayout(5d, 0d, (1.6, 0d)));
             _enter.TextSize = 20d;
             _enter.SingleLine = true;
             _left.AddChild(_enter);
             
+            _slide = new Slider();
+            _slide.MinValue = 0d;
+            _slide.MaxValue = 3d;
+            _slide.Value = 0.5;
+            _slide.SliderPos += Gain;
+            _slide.SilderWidth = 200d;
+            _slide.Padding = new Vector2(10, 30);
+            
             _rb = new ReadBuffer();
             
             _sys = new AudioSystem(Devices.DefaultOutput, 1024);
-            _sys.Gain = 0.5;
+            _sys.Gain = _slide.Value;
+            _sys.Sources.Add(_rb);
             _read = new AudioReader(Devices.DefaultInput, 1024);
             _read.OnAudio += Send;
-            _sys.Sources.Add(_rb);
             
             RootElement.Focus = _enter;
         }
@@ -65,6 +109,7 @@ namespace lvt
         private ConsoleElement _console;
         private Container _left;
         private TextInput _enter;
+        private Slider _slide;
         
         private UdpClient _udp;
         private IPEndPoint _ep = new IPEndPoint(IPAddress.Any, _port);
@@ -83,6 +128,46 @@ namespace lvt
         {
             _sys.Gain = v;
         }
+        private void SetOutput(object s, int sel)
+        {
+            bool r = _sys.Running;
+            double g = _sys.Gain;
+            if (r)
+            {
+                _sys.Stop();
+            }
+            _sys.Dispose();
+            
+            _sys = new AudioSystem(Devices.Outputs[sel], 1024);
+            _sys.Gain = g;
+            _sys.Sources.Add(_rb);
+            _rb.OurSR = _sys.SampleRate;
+            if (r)
+            {
+                _sys.Start();
+            }
+        }
+        private void SetInput(object s, int sel)
+        {
+            bool r = _read.Running;
+            if (r)
+            {
+                _read.Stop();
+            }
+            _read.OnAudio -= Send;
+            _read.Dispose();
+            
+            _read = new AudioReader(Devices.Inputs[sel], 1024);
+            _read.OnAudio += Send;
+            if (r)
+            {
+                _read.Start();
+            }
+            
+            byte[] info = new DeviceInfo(_read.SampleRate, _read.Stereo).GetBytes();
+            _console.WriteLine("Sending new device info.");
+            _udp.Send(info, info.Length, _ep);
+        }
         
         protected override void OnStart(EventArgs e)
         {
@@ -96,6 +181,9 @@ namespace lvt
             
             _read.Stop();
             _sys.Stop();
+            
+            // send end call
+            _udp.Send(new byte[] { 5 }, 1, _ep);
         }
         protected override void OnUpdate(FrameEventArgs e)
         {
@@ -183,14 +271,7 @@ namespace lvt
             // add gain silder
             Task.Run(() =>
             {
-                Slider s = new Slider();
-                s.MinValue = 0d;
-                s.MaxValue = 3d;
-                s.SliderPos += Gain;
-                s.SilderWidth = 200d;
-                s.Padding = new Vector2(10, 30);
-                s.Value = _sys.Gain;
-                _left.AddChild(s);
+                _left.AddChild(_slide);
             });
             
             _console.WriteLine("Starting call.");
@@ -241,14 +322,48 @@ namespace lvt
                     continue;
                 }
                 
-                // audio data
-                _rb.Write(data);
+                byte code = data[0];
+                
+                if (code == 0)
+                {
+                    // audio data
+                    _rb.Write(data.AsSpan().Slice(1));
+                }
+                if (code == 1)
+                {
+                    // new device info
+                    DeviceInfo di = DeviceInfo.FromBytes(data);
+                    _console.WriteLine("Device information updated.");
+                    _rb.Info = di;
+                    _rb.OurSR = _sys.SampleRate;
+                }
+                // end call
+                if (code == 5)
+                {
+                    _console.WriteLine("Call was ended.");
+                       
+                    _sys.Stop();
+                    _read.Stop();
+                    _ep = new IPEndPoint(IPAddress.Any, _port);
+                    
+                    _connection = false;
+                    _location = false;
+                    
+                    ListActions la = _left.Children.StartGroupAction();
+                    la.Remove(_slide);
+                    la.Add(_enter);
+                    la.Apply();
+                }
             }
         }
         private void Send(Span<float> data, uint channels)
         {
             Span<byte> bytes = MemoryMarshal.AsBytes(data);
-            byte[] array = bytes.ToArray();
+            byte[] array = new byte[bytes.Length + 1];
+            bytes.CopyTo(array.AsSpan().Slice(1));
+            
+            // data code
+            array[0] = 0;
             
             _udp.SendAsync(array, array.Length, _ep);
         }

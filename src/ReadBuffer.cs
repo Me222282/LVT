@@ -24,7 +24,7 @@ namespace lvt
         private bool _waiting;
         private int _bufferSize;
         
-        public bool Stereo => Info.Stereo;
+        public bool Stereo => false;
         
         public DeviceInfo Info;
         public long OurSR
@@ -36,9 +36,9 @@ namespace lvt
         }
         private double _scale;
         
-        public void Write(byte[] block)
+        public void Write(ReadOnlySpan<byte> block)
         {
-            Span<float> floats = MemoryMarshal.Cast<byte, float>(block);
+            ReadOnlySpan<float> floats = MemoryMarshal.Cast<byte, float>(block);
             float[] data = new float[floats.Length];
             floats.CopyTo(data);
             Node n = new Node();
@@ -60,26 +60,34 @@ namespace lvt
             if (_front == null || _front.Next == null)
             {
                 _waiting = true;
+                _readPointer = 0d;
                 return 0d;
             }
             if (_waiting)
             {
                 if (_bufferSize < 3)
                 {
+                    _readPointer = 0d;
                     return 0d;
                 }
                 _waiting = false;
             }
-            if (_bufferSize > 7)
+            if (_bufferSize > 5)
             {
-                while (_bufferSize > 5)
+                while (_bufferSize > 4)
                 {
                     _front = _front.Next;
                     _bufferSize--;
                 }
+                _readPointer = 0d;
             }
             
-            if (Stereo)
+            if (_readPointer > _front.Data.Length)
+            {
+                _readPointer = _readPointer % _front.Data.Length;
+            }
+            
+            if (Info.Stereo)
             {
                 Vector2 v = GetV(_front, _readPointer / 2d);
                 _readPointer += _scale * 2d;
@@ -89,7 +97,7 @@ namespace lvt
                     _front = _front.Next;
                     _bufferSize--;
                 }
-                return v;
+                return v.X + v.Y;
             }
             
             float vM = Get(_front, _readPointer);
