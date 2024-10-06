@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Linq;
 using Zene.GUI;
 using Zene.Windowing;
+using Zene.Structs;
 
 // local voice transfer
 namespace lvt
@@ -76,6 +77,13 @@ namespace lvt
         private AudioSystem _sys;
         private AudioReader _read;
         
+        private bool _render = true;
+        
+        private void Gain(object s, double v)
+        {
+            _sys.Gain = v;
+        }
+        
         protected override void OnStart(EventArgs e)
         {
             base.OnStart(e);
@@ -89,10 +97,23 @@ namespace lvt
             _read.Stop();
             _sys.Stop();
         }
+        protected override void OnUpdate(FrameEventArgs e)
+        {
+            if (_render)
+            {
+                base.OnUpdate(e);
+            }
+        }
 
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+            
+            if (e[Keys.D])
+            {
+                _render = !_render;
+                return;
+            }
             
             // send request
             if (e[Keys.Enter] && _enter.Focused)
@@ -158,6 +179,19 @@ namespace lvt
             }
             
             // Thread.Sleep(100);
+            
+            // add gain silder
+            Task.Run(() =>
+            {
+                Slider s = new Slider();
+                s.MinValue = 0d;
+                s.MaxValue = 3d;
+                s.SliderPos += Gain;
+                s.SilderWidth = 200d;
+                s.Padding = new Vector2(10, 30);
+                s.Value = _sys.Gain;
+                _left.AddChild(s);
+            });
             
             _console.WriteLine("Starting call.");
             
