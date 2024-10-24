@@ -4,13 +4,15 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Text;
 using System.Threading;
-
-using Zene.Audio;
 using System.Runtime.InteropServices;
 using System.Linq;
+
+using Zene.Audio;
 using Zene.GUI;
 using Zene.Windowing;
 using Zene.Structs;
+using System.IO;
+using System.IO.Compression;
 
 // local voice transfer
 namespace lvt
@@ -333,7 +335,7 @@ namespace lvt
                 if (code == 0)
                 {
                     // audio data
-                    _rb.Write(data.AsSpan().Slice(1));
+                    _rb.Write(Decompress(data));
                 }
                 if (code == 1)
                 {
@@ -362,16 +364,42 @@ namespace lvt
                 }
             }
         }
+        private Span<byte> Decompress(byte[] array)
+        {
+            MemoryStream ms = new MemoryStream(array);
+            // data code
+            ms.ReadByte();
+            DeflateStream comp = new DeflateStream(ms, CompressionMode.Decompress);
+            
+            byte[] buffer = new byte[1024 * sizeof(float)];
+            
+            int totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                int bytesRead = comp.Read(buffer.AsSpan(totalRead));
+                if (bytesRead == 0) { break; }
+                totalRead += bytesRead;
+            }
+            
+            return buffer.AsSpan(0, totalRead);
+        }
         private void Send(Span<float> data, uint channels)
         {
             Span<byte> bytes = MemoryMarshal.AsBytes(data);
-            byte[] array = new byte[bytes.Length + 1];
-            bytes.CopyTo(array.AsSpan().Slice(1));
+            byte[] array = new byte[bytes.Length];
+            bytes.CopyTo(array);
             
-            // data code
-            array[0] = 0;
-            
-            _udp.SendAsync(array, array.Length, _ep);
+            Task.Run(() =>
+            {
+                MemoryStream ms = new MemoryStream(array.Length + 1);
+                // data code
+                ms.WriteByte(0);
+                DeflateStream comp = new DeflateStream(ms, CompressionLevel.Optimal);
+                ms.Write(array);
+                
+                byte[] send = ms.GetBuffer();
+                _udp.Send(send, send.Length, _ep);
+            });
         }
         private bool GetIP(string ipStr)
         {
