@@ -125,6 +125,7 @@ namespace lvt
         private AudioReader _read;
         
         private bool _render = true;
+        private double _packetTime = 0d;
         
         private void Gain(object s, double v)
         {
@@ -199,6 +200,15 @@ namespace lvt
             {
                 base.OnUpdate(e);
             }
+            double time = Timer - _packetTime;
+            if (_sendingData && time > 5d)
+            {
+                _console.WriteLine("Connection timed out!");
+                _console.WriteLine("Ending call.");
+                
+                _udp.Send(new byte[] { 5 }, 1, _ep);
+                EndCall();
+            }
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -256,6 +266,21 @@ namespace lvt
             
             _connection = true;
             Task.Run(StartCall);
+        }
+        private void EndCall()
+        {
+            _sys.Stop();
+            _read.Stop();
+            _ep = new IPEndPoint(IPAddress.Any, _port);
+            
+            _connection = false;
+            _location = false;
+            _sendingData = false;
+            
+            ListActions la = _left.Children.StartGroupAction();
+            la.Remove(_slide);
+            la.Add(_enter);
+            la.Apply();
         }
         private void StartCall()
         {   
@@ -327,6 +352,7 @@ namespace lvt
                     _rb.Info = di;
                     _rb.OurSR = _sys.SampleRate;
                     _sendingData = true;
+                    _packetTime = Timer;
                     continue;
                 }
                 
@@ -334,6 +360,7 @@ namespace lvt
                 
                 if (code == 0)
                 {
+                    _packetTime = Timer;
                     // audio data
                     _rb.Write(Decompress(data));
                 }
@@ -350,22 +377,13 @@ namespace lvt
                 {
                     _console.WriteLine("Call was ended.");
                        
-                    _sys.Stop();
-                    _read.Stop();
-                    _ep = new IPEndPoint(IPAddress.Any, _port);
-                    
-                    _connection = false;
-                    _location = false;
-                    
-                    ListActions la = _left.Children.StartGroupAction();
-                    la.Remove(_slide);
-                    la.Add(_enter);
-                    la.Apply();
+                    EndCall();
                 }
             }
         }
-        private Span<byte> Decompress(byte[] array)
+        private static Span<byte> Decompress(byte[] array)
         {
+            return array;
             MemoryStream ms = new MemoryStream(array);
             // data code
             ms.ReadByte();
@@ -394,10 +412,11 @@ namespace lvt
                 MemoryStream ms = new MemoryStream(array.Length + 1);
                 // data code
                 ms.WriteByte(0);
-                DeflateStream comp = new DeflateStream(ms, CompressionLevel.Optimal);
+                // DeflateStream comp = new DeflateStream(ms, CompressionMode.Compress);
                 ms.Write(array);
+                // comp.Flush();
                 
-                byte[] send = ms.GetBuffer();
+                byte[] send = ms.ToArray();
                 _udp.Send(send, send.Length, _ep);
             });
         }
